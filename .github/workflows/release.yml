@@ -1,0 +1,78 @@
+name: Release
+
+# Push a tag like v0.1.0 to publish:
+# - a GitHub release with the built plugin (zip and tar.gz) and both installers;
+# - the npm package, when the NPM_TOKEN secret is set.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  release:
+    name: build, attach and publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.9.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Check the tag matches package.json
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          version="$(node -p "require('./package.json').version")"
+          if [ "$tag" != "$version" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match package.json $version" >&2
+            exit 1
+          fi
+
+      - name: Build and selftest
+        run: |
+          pnpm build
+          pnpm selftest
+
+      - name: Pack the plugin for the installers
+        run: |
+          mkdir -p stage/opencode-subagents-gui
+          cp -r dist package.json README.md CHANGELOG.md LICENSE stage/opencode-subagents-gui/
+          (cd stage && zip -qr ../opencode-subagents-gui.zip opencode-subagents-gui)
+          (cd stage && tar -czf ../opencode-subagents-gui.tar.gz opencode-subagents-gui)
+          ls -lh opencode-subagents-gui.zip opencode-subagents-gui.tar.gz
+
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "OpenCode Subagents $GITHUB_REF_NAME" \
+            --generate-notes \
+            opencode-subagents-gui.zip opencode-subagents-gui.tar.gz install.ps1 install.sh \
+            || gh release upload "$GITHUB_REF_NAME" \
+              opencode-subagents-gui.zip opencode-subagents-gui.tar.gz install.ps1 install.sh --clobber
+
+      - name: Publish to npm
+        # The GitHub release above is the install path that always works. A missing, expired or
+        # read-only NPM_TOKEN shows here as a warning instead of failing the release.
+        continue-on-error: true
+        run: npm publish --provenance --access public

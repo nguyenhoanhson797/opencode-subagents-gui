@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.dist-staging/
+coverage/
+*.log
+*.tgz
+.env
+.env.*
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
